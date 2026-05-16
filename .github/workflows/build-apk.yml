@@ -1,0 +1,106 @@
+name: Build & Release APK
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build-apk:
+    name: Build soccer-clashers.apk
+    runs-on: ubuntu-latest
+
+    steps:
+      # ── Checkout ────────────────────────────────────────────────────────────
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      # ── Java (required by Gradle) ────────────────────────────────────────────
+      - name: Set up Java 17
+        uses: actions/setup-java@v4
+        with:
+          java-version: '17'
+          distribution: temurin
+
+      # ── Node.js ─────────────────────────────────────────────────────────────
+      - name: Set up Node.js 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+
+      # ── Android SDK components ────────────────────────────────────────────
+      - name: Install Android SDK platform + build-tools
+        run: |
+          yes | $ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager --licenses > /dev/null 2>&1 || true
+          $ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager \
+            "platform-tools" \
+            "platforms;android-34" \
+            "build-tools;34.0.0"
+
+      # ── npm install ──────────────────────────────────────────────────────────
+      - name: Install dependencies
+        run: npm ci
+
+      # ── Build web assets (copies src/ + index.html → www/) ─────────────────
+      - name: Build web assets
+        run: npm run build
+
+      # ── Capacitor: add Android platform ────────────────────────────────────
+      - name: Add Capacitor Android platform
+        run: npx cap add android
+
+      # ── Capacitor: sync web assets into android project ─────────────────────
+      - name: Sync Capacitor
+        run: npx cap sync android
+
+      # ── Grant execute permission to Gradle wrapper ──────────────────────────
+      - name: Make gradlew executable
+        run: chmod +x android/gradlew
+
+      # ── Build debug APK ─────────────────────────────────────────────────────
+      - name: Build Debug APK
+        working-directory: android
+        run: ./gradlew assembleDebug --no-daemon
+        env:
+          ANDROID_HOME: /usr/local/lib/android/sdk
+          ANDROID_SDK_ROOT: /usr/local/lib/android/sdk
+
+      # ── Rename APK ──────────────────────────────────────────────────────────
+      - name: Rename APK to soccer-clashers.apk
+        run: cp android/app/build/outputs/apk/debug/app-debug.apk soccer-clashers.apk
+
+      # ── Determine version tag ───────────────────────────────────────────────
+      - name: Compute version tag
+        id: version
+        run: echo "tag=v1.0.${{ github.run_number }}" >> "$GITHUB_OUTPUT"
+
+      # ── Create GitHub Release and upload APK ────────────────────────────────
+      - name: Create Release & upload APK
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.version.outputs.tag }}
+          name: Soccer Clasher ${{ steps.version.outputs.tag }}
+          body: |
+            ## ⚽ Soccer Clasher ${{ steps.version.outputs.tag }}
+
+            Build automatique déclenché par le merge sur `main`.
+
+            ### 📲 Installation Android
+            1. Téléchargez **soccer-clashers.apk** ci-dessous
+            2. Sur votre appareil : *Paramètres → Sécurité → Sources inconnues* → Activé
+            3. Ouvrez le fichier APK pour installer
+
+            ### 🆕 Contenu Phase 1
+            - Terrain de football vue du dessus (portrait)
+            - 2 équipes : **PSG** et **OM** (11 joueurs réels, saison 2024-25)
+            - Système de cartes façon Clash Royale (4 en main, énergie rechargeable)
+            - Structures : Drapeau de corner (1000 PV) + But (2000 PV)
+            - 6 capacités spéciales : Rapide, Tank, Frappe puissante, Zone, Buteur, Boost énergie
+            - IA adversaire avec déploiement automatique
+          files: soccer-clashers.apk
+          draft: false
+          prerelease: false
