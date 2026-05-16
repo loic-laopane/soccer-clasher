@@ -40,24 +40,20 @@ class Unit {
     this.attackCooldown = 1000;
     this.attackTimer    = 0;
     this.attackRange    = 52;
-    // A unit can engage a target up to 2.5× attack range before releasing it
-    this.chaseRange     = this.attackRange * 2.5;
+    this.chaseRange     = this.attackRange * 2.4;
 
-    // Single locked target — one target at a time
-    this._lockedTarget  = null;   // Unit or Structure
-    this._targetIsUnit  = false;
+    // Single locked target — one at a time
+    this._lockedTarget = null;
+    this._targetIsUnit = false;
 
     this._jerseyColor = parseInt(teamData.jerseyColor.slice(1), 16);
     this._sz = ROLE_SIZE[data.position] ?? {bw:16,bh:14,hr:8};
     this._createVisuals();
   }
 
-  // ── Visuals ──────────────────────────────────────────────────────────────────
-
   _createVisuals() {
     const {x, y, scene:s, _sz:sz, _jerseyColor:jc} = this;
     const skin=0xFFCCAA, hair=0x2A1800, sc=this.teamData.secondaryColor;
-
     this._shadow = s.add.ellipse(x,y+sz.bh/2+sz.hr/2+2,sz.bw+6,7,0x000000,0.28).setDepth(5);
     this._legL   = s.add.rectangle(x-sz.bw*0.22,y+sz.bh/2+5,sz.bw*0.22,10,0x222222).setStrokeStyle(1,0x000000,0.6).setDepth(6);
     this._legR   = s.add.rectangle(x+sz.bw*0.22,y+sz.bh/2+5,sz.bw*0.22,10,0x222222).setStrokeStyle(1,0x000000,0.6).setDepth(6);
@@ -73,47 +69,59 @@ class Unit {
     this._dot    = s.add.circle(x+sz.bw/2,y+sz.bh/2,4,ABILITY_COLOR[this.ability]??0xFFFFFF).setDepth(12);
   }
 
+  // ── Bridge helpers ───────────────────────────────────────────────────────────
+
+  _inBridgeZone(x) {
+    const hw = CONFIG.BRIDGE_W / 2;
+    return Math.abs(x - CONFIG.BRIDGE_LEFT_X) <= hw ||
+           Math.abs(x - CONFIG.BRIDGE_RIGHT_X) <= hw;
+  }
+
+  _nearestBridgeX(x) {
+    const dl = Math.abs(x - CONFIG.BRIDGE_LEFT_X);
+    const dr = Math.abs(x - CONFIG.BRIDGE_RIGHT_X);
+    return dl <= dr ? CONFIG.BRIDGE_LEFT_X : CONFIG.BRIDGE_RIGHT_X;
+  }
+
   // ── Update ───────────────────────────────────────────────────────────────────
 
   update(delta, enemies, flags, goal) {
     if (this.isDead) return;
-
     const step = this.speed * delta;
+    const CY   = CONFIG.CENTER_Y;
 
-    // ── Validate & possibly release locked target ────────────────────────────
+    // ── Validate locked target ───────────────────────────────────────────────
     if (this._lockedTarget) {
-      const t = this._lockedTarget;
+      const t    = this._lockedTarget;
       const dead = this._targetIsUnit ? t.isDead : t.destroyed;
       const dist = Math.hypot(this.x-t.x, this.y-t.y);
-      // Release if dead, or if unit target drifted beyond chase range
       if (dead || (this._targetIsUnit && dist > this.chaseRange)) {
         this._lockedTarget = null;
       }
     }
 
-    // ── Pick a new locked target if none ────────────────────────────────────
+    // ── Pick new locked target ───────────────────────────────────────────────
     if (!this._lockedTarget) {
-      // Prefer nearest living enemy unit
       let nearestEnemy=null, nearestDist=Infinity;
       for (const e of enemies) {
         if (e.isDead) continue;
         const d = Math.hypot(this.x-e.x, this.y-e.y);
         if (d < nearestDist) { nearestEnemy=e; nearestDist=d; }
       }
-
-      if (nearestEnemy) {
+      // Only lock onto enemy if within CHASE_RANGE
+      if (nearestEnemy && nearestDist <= CONFIG.CHASE_RANGE) {
         this._lockedTarget = nearestEnemy;
         this._targetIsUnit = true;
       } else {
-        // No enemies — target nearest alive flag, then goal
+        // Target nearest alive flag, then goal
         const aliveFlags = (flags||[]).filter(f=>!f.destroyed);
-        let bestFlag=null, bestD=Infinity;
+        let best=null, bestD=Infinity;
         for (const f of aliveFlags) {
           const d=Math.hypot(this.x-f.x, this.y-f.y);
-          if (d<bestD) { bestFlag=f; bestD=d; }
+          if(d<bestD){best=f;bestD=d;}
         }
-        const structTarget = bestFlag ?? (goal&&!goal.destroyed?goal:null);
-        if (structTarget) { this._lockedTarget=structTarget; this._targetIsUnit=false; }
+        const st = best ?? (goal&&!goal.destroyed?goal:null);
+        if (st) { this._lockedTarget=st; this._targetIsUnit=false; }
       }
     }
 
@@ -124,15 +132,12 @@ class Unit {
     const dist = Math.hypot(this.x-t.x, this.y-t.y);
 
     if (dist <= this.attackRange) {
-      // In range — attack (do not move)
       this.state = this._targetIsUnit ? 'fighting' : 'attacking_structure';
       this.attackTimer += delta;
       if (this.attackTimer >= this.attackCooldown) {
         this.attackTimer -= this.attackCooldown;
-        const dmg = (!this._targetIsUnit && this.ability==='striker')
-          ? Math.round(this.atk * 1.5) : this.atk;
+        const dmg = (!this._targetIsUnit && this.ability==='striker') ? Math.round(this.atk*1.5) : this.atk;
         t.takeDamage(dmg);
-        // AoE: splash to nearby enemies (not the locked target, and only when fighting units)
         if (this._targetIsUnit && this.ability==='aoe') {
           for (const e of enemies) {
             if (e!==t && !e.isDead && Math.hypot(this.x-e.x,this.y-e.y)<90)
@@ -141,10 +146,34 @@ class Unit {
         }
       }
     } else {
-      // Out of range — move toward locked target
+      // ── Bridge-enforced movement ─────────────────────────────────────────
       this.state = 'moving';
       this.attackTimer = 0;
-      this._moveToward(t.x, t.y, step);
+
+      const onOwnHalf      = this.isPlayer ? (this.y >= CY) : (this.y <= CY);
+      const targetEnemySide = this.isPlayer ? (t.y < CY) : (t.y > CY);
+
+      if (onOwnHalf && targetEnemySide) {
+        // Must use a bridge to cross
+        if (this._inBridgeZone(this.x)) {
+          // Aligned: move straight across
+          this._moveToward(t.x, t.y, step);
+        } else {
+          // Navigate to nearest bridge entrance
+          const bx = this._nearestBridgeX(this.x);
+          this._moveToward(bx, CY, step);
+        }
+      } else {
+        this._moveToward(t.x, t.y, step);
+      }
+
+      // Safety wall: prevent crossing CENTER_Y outside bridge zone
+      const prevOnOwn = this.isPlayer ? (this.y >= CY) : (this.y <= CY);
+      // (already moved) check if just crossed
+      const nowOnEnemy = this.isPlayer ? (this.y < CY) : (this.y > CY);
+      if (!prevOnOwn && nowOnEnemy && !this._inBridgeZone(this.x)) {
+        this.y = CY; // snap back to center line wall
+      }
     }
 
     this.x = Phaser.Math.Clamp(this.x, CONFIG.FIELD_LEFT+4, CONFIG.FIELD_RIGHT-4);
@@ -154,51 +183,42 @@ class Unit {
 
   _moveToward(tx, ty, step) {
     const dx=tx-this.x, dy=ty-this.y, dist=Math.hypot(dx,dy);
-    if (dist<1) return;
+    if(dist<1) return;
     const r=Math.min(step,dist)/dist;
     this.x+=dx*r; this.y+=dy*r;
   }
 
-  // ── Damage & Death ───────────────────────────────────────────────────────────
-
   takeDamage(amount) {
-    if (this.isDead) return;
-    this.currentHp=Math.max(0, this.currentHp-Math.round(amount));
+    if(this.isDead) return;
+    this.currentHp=Math.max(0,this.currentHp-Math.round(amount));
     this._body.setFillStyle(0xFF3333);
     this._head.setFillStyle(0xFF3333);
     this.scene.time.delayedCall(130,()=>{
       if(!this.isDead){this._body.setFillStyle(this._jerseyColor);this._head.setFillStyle(0xFFCCAA);}
     });
-    if (this.currentHp<=0) this._die();
+    if(this.currentHp<=0) this._die();
   }
 
   _die() {
     this.isDead=true;
     const objs=[this._shadow,this._legL,this._legR,this._body,
                 this._stripe,this._head,this._hair,this._hpBg,this._hpFill,this._dot];
-    this.scene.tweens.add({
-      targets:objs,alpha:0,scaleX:1.6,scaleY:1.6,duration:380,
-      onComplete:()=>objs.forEach(o=>o.destroy()),
-    });
+    this.scene.tweens.add({targets:objs,alpha:0,scaleX:1.6,scaleY:1.6,duration:380,
+      onComplete:()=>objs.forEach(o=>o.destroy())});
   }
-
-  // ── Visuals update ───────────────────────────────────────────────────────────
 
   _updateVisuals() {
     const x=Math.round(this.x), y=Math.round(this.y), sz=this._sz;
     const headY=y-sz.bh/2-sz.hr, legLX=x-sz.bw*0.22, legRX=x+sz.bw*0.22;
     const legY=y+sz.bh/2+5, barY=headY-sz.hr-8;
-
     this._shadow.setPosition(x,y+sz.bh/2+sz.hr/2+2);
     this._body.setPosition(x,y); this._stripe.setPosition(x,y-sz.bh*0.1);
     this._head.setPosition(x,headY); this._hair.setPosition(x,headY);
     this._hpBg.setPosition(x,barY); this._hpFill.setPosition(x-this._barW/2,barY);
     this._dot.setPosition(x+sz.bw/2,y+sz.bh/2);
-
     const pct=this.currentHp/this.maxHp;
     this._hpFill.width=Math.max(0,this._barW*pct);
     this._hpFill.fillColor=pct>0.5?0x00CC00:pct>0.25?0xFFAA00:0xFF2200;
-
     const wobble=this.state==='moving'?Math.sin(Date.now()*0.013)*3:0;
     this._legL.setPosition(legLX,legY+wobble);
     this._legR.setPosition(legRX,legY-wobble);
