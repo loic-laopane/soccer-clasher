@@ -1,0 +1,20 @@
+{
+  "name": "soccer-clasher",
+  "version": "1.0.0",
+  "description": "Soccer Clasher – Clash Royale-style football game (PSG vs OM, Ligue 1 2024-25)",
+  "scripts": {
+    "build": "mkdir -p www && cp index.html www/ && cp -r src www/",
+    "start": "npx serve . -p 3000",
+    "cap:add": "npx cap add android",
+    "cap:sync": "npx cap sync android",
+    "cap:open": "npx cap open android"
+  },
+  "dependencies": {
+    "@capacitor/android": "^6.1.0",
+    "@capacitor/core": "^6.1.0"
+  },
+  "devDependencies": {
+    "@capacitor/cli": "^6.1.0",
+    "serve": "^14.2.3"
+  }
+}
