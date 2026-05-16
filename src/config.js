@@ -1,14 +1,14 @@
 const CONFIG = {
   WIDTH: 480,
   HEIGHT: 800,
-  FIELD_BOTTOM: 668,   // expanded field (+30px)
-  CENTER_Y: 334,
+  FIELD_BOTTOM: 702,   // field occupies most of screen
+  CENTER_Y: 351,
 
-  // Structures
-  OPP_GOAL_Y: 28,
-  OPP_FLAG_Y: 125,
-  PLR_FLAG_Y: 543,
-  PLR_GOAL_Y: 640,
+  // Structures (symmetric around CENTER_Y)
+  OPP_GOAL_Y: 26,
+  OPP_FLAG_Y: 128,
+  PLR_FLAG_Y: 574,
+  PLR_GOAL_Y: 676,
 
   // Bridges at center line — obligatory crossing points
   BRIDGE_LEFT_X:  110,
@@ -20,8 +20,8 @@ const CONFIG = {
   FIELD_RIGHT: 466,
 
   // AI spawn zones
-  OPP_SPAWN_MIN_Y: 50,
-  OPP_SPAWN_MAX_Y: 300,
+  OPP_SPAWN_MIN_Y: 48,
+  OPP_SPAWN_MAX_Y: 310,
 
   // Chase range: only chase enemy if closer than this (else advance toward structures)
   CHASE_RANGE: 220,

@@ -142,17 +142,17 @@ class GameScene extends Phaser.Scene {
     this.add.text(W/2,UY-12,this.playerTeam.shortName,{fontSize:'12px',color:'#FFFFFF',fontFamily:'Arial',fontStyle:'bold',stroke:'#000000',strokeThickness:3}).setOrigin(0.5,1).setDepth(15);
     this.matchTimerText=this.add.text(W/2,14,'00:00',{fontSize:'13px',color:'#FFD700',fontFamily:'Arial',fontStyle:'bold'}).setOrigin(0.5,0).setDepth(16);
 
-    // Compact energy bar
-    const barX=8,barY=UY+16,barW=W-16,barH=14;
-    this.add.text(barX,UY+5,'⚡',{fontSize:'10px',color:'#FFD700',fontFamily:'Arial'}).setDepth(15);
+    // Compact energy bar — fits in 98px UI panel
+    const barX=8, barY=UY+12, barW=W-16, barH=12;
+    this.add.text(barX,UY+4,'⚡',{fontSize:'9px',color:'#FFD700',fontFamily:'Arial'}).setDepth(15);
     this.add.rectangle(barX+barW/2,barY,barW,barH,0x111133).setStrokeStyle(1,0x333366).setDepth(15);
     this._energyFill=this.add.rectangle(barX,barY,0,barH-2,0x2266FF).setOrigin(0,0.5).setDepth(16);
     this._energyFullW=barW;
     const tg=this.add.graphics().setDepth(17);
-    tg.lineStyle(1,0xFFFFFF,0.3);
+    tg.lineStyle(1,0xFFFFFF,0.28);
     for(let i=1;i<10;i++){const tx=barX+(i/10)*barW;tg.lineBetween(tx,barY-barH/2+2,tx,barY+barH/2-2);}
-    this._energyText=this.add.text(W-6,barY,'5',{fontSize:'11px',color:'#FFFFFF',fontFamily:'Arial',fontStyle:'bold'}).setOrigin(1,0.5).setDepth(17);
-    this.instrText=this.add.text(W/2,UY+33,'Glissez une carte sur le terrain',{fontSize:'10px',color:'#AAAAAA',fontFamily:'Arial'}).setOrigin(0.5).setDepth(15);
+    this._energyText=this.add.text(W-5,barY,'5',{fontSize:'10px',color:'#FFFFFF',fontFamily:'Arial',fontStyle:'bold'}).setOrigin(1,0.5).setDepth(17);
+    this.instrText=this.add.text(W/2,UY+28,'Glissez une carte sur le terrain',{fontSize:'9px',color:'#AAAAAA',fontFamily:'Arial'}).setOrigin(0.5).setDepth(15);
   }
 
   // ─── Drag ghost ─────────────────────────────────────────────────────────────
@@ -194,9 +194,11 @@ class GameScene extends Phaser.Scene {
 
   _renderCards(){
     this.cardObjects.forEach(g=>g.forEach(o=>o.destroy())); this.cardObjects=[];
-    const W=CONFIG.WIDTH, cw=88, ch=104, gap=5;
+    // Cards must fit in 98px UI panel (FIELD_BOTTOM 702 → screen 800)
+    // Layout: top=702+34=736, height=62px → bottom=798 ✓
+    const W=CONFIG.WIDTH, cw=90, ch=62, gap=5;
     const startX=(W-(4*cw+3*gap))/2;
-    const cardTopY=CONFIG.FIELD_BOTTOM+44;
+    const cardTopY=CONFIG.FIELD_BOTTOM+34;
 
     for(let i=0;i<4;i++){
       const card=this.playerHand[i];
@@ -218,20 +220,28 @@ class GameScene extends Phaser.Scene {
         this.instrText.setText('Relâchez sur votre camp');
       });
       group.push(bg);
-      group.push(this.add.rectangle(cx,cy-ch/2+8,cw,16,parseInt(this.playerTeam.jerseyColor.slice(1),16)).setDepth(16).setAlpha(canAfford?1:0.4));
-      group.push(this.add.text(cx,cy-ch/2+8,card.position,{fontSize:'9px',color:'#FFD700',fontFamily:'Arial',fontStyle:'bold'}).setOrigin(0.5).setDepth(17).setAlpha(canAfford?1:0.5));
 
-      const sz=ROLE_SIZE[card.position]??{bw:16,bh:14,hr:8}, sc=0.75;
+      // Jersey color strip + position
       const jc=parseInt(this.playerTeam.jerseyColor.slice(1),16);
+      group.push(this.add.rectangle(cx,cy-ch/2+8,cw,16,jc).setDepth(16).setAlpha(canAfford?1:0.4));
+      group.push(this.add.text(cx,cy-ch/2+8,card.position,{fontSize:'8px',color:'#FFD700',fontFamily:'Arial',fontStyle:'bold'}).setOrigin(0.5).setDepth(17).setAlpha(canAfford?1:0.5));
+
+      // Name
+      group.push(this.add.text(cx,cy+3,card.name,{
+        fontSize:'8px',color:canAfford?'#FFFFFF':'#555577',
+        fontFamily:'Arial',fontStyle:'bold',wordWrap:{width:cw-8},align:'center',
+      }).setOrigin(0.5).setDepth(17));
+
+      // Ability (short)
+      group.push(this.add.text(cx,cy+18,card.abDesc,{
+        fontSize:'6px',color:canAfford?'#88AAFF':'#333355',
+        fontFamily:'Arial',align:'center',wordWrap:{width:cw-8},
+      }).setOrigin(0.5).setDepth(17));
+
+      // Cost badge
       group.push(
-        this.add.rectangle(cx,cy-16,sz.bw*sc,sz.bh*sc,jc).setStrokeStyle(1,0x000000).setDepth(17).setAlpha(canAfford?1:0.5),
-        this.add.circle(cx,cy-16-sz.bh*sc/2-sz.hr*sc,sz.hr*sc,0xFFCCAA).setStrokeStyle(1,0x000000).setDepth(18).setAlpha(canAfford?1:0.5),
-      );
-      group.push(this.add.text(cx,cy+12,card.name,{fontSize:'8px',color:canAfford?'#FFFFFF':'#555577',fontFamily:'Arial',fontStyle:'bold',wordWrap:{width:cw-6},align:'center'}).setOrigin(0.5).setDepth(17));
-      group.push(this.add.text(cx,cy+28,card.abDesc,{fontSize:'7px',color:canAfford?'#88AAFF':'#333355',fontFamily:'Arial',align:'center',wordWrap:{width:cw-6}}).setOrigin(0.5).setDepth(17));
-      group.push(
-        this.add.circle(cx+cw/2-11,cy+ch/2-11,12,0x7700CC).setStrokeStyle(1,0xFFFFFF).setDepth(17).setAlpha(canAfford?1:0.5),
-        this.add.text(cx+cw/2-11,cy+ch/2-11,card.cost.toString(),{fontSize:'11px',color:'#FFFFFF',fontFamily:'Arial',fontStyle:'bold'}).setOrigin(0.5).setDepth(18).setAlpha(canAfford?1:0.5),
+        this.add.circle(cx+cw/2-10,cy+ch/2-10,11,0x7700CC).setStrokeStyle(1,0xFFFFFF).setDepth(17).setAlpha(canAfford?1:0.5),
+        this.add.text(cx+cw/2-10,cy+ch/2-10,card.cost.toString(),{fontSize:'10px',color:'#FFFFFF',fontFamily:'Arial',fontStyle:'bold'}).setOrigin(0.5).setDepth(18).setAlpha(canAfford?1:0.5),
       );
       this.cardObjects.push(group);
     }
