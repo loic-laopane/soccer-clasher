@@ -32,17 +32,18 @@ jobs:
           node-version: '20'
           cache: npm
 
-      # ── Android SDK components ────────────────────────────────────────────
-      - name: Install Android SDK platform + build-tools
+      # ── Android SDK ──────────────────────────────────────────────────────────
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Install Android SDK platform 34 + build-tools
         run: |
-          yes | $ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager --licenses > /dev/null 2>&1 || true
-          $ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager \
-            "platform-tools" \
-            "platforms;android-34" \
-            "build-tools;34.0.0"
+          sdkmanager --install "platform-tools" "platforms;android-34" "build-tools;34.0.0"
+        env:
+          ANDROID_HOME: ${{ env.ANDROID_HOME }}
 
       # ── npm install ──────────────────────────────────────────────────────────
-      - name: Install dependencies
+      - name: Install Node dependencies
         run: npm ci
 
       # ── Build web assets (copies src/ + index.html → www/) ─────────────────
@@ -52,10 +53,14 @@ jobs:
       # ── Capacitor: add Android platform ────────────────────────────────────
       - name: Add Capacitor Android platform
         run: npx cap add android
+        env:
+          CI: true
 
       # ── Capacitor: sync web assets into android project ─────────────────────
       - name: Sync Capacitor
         run: npx cap sync android
+        env:
+          CI: true
 
       # ── Grant execute permission to Gradle wrapper ──────────────────────────
       - name: Make gradlew executable
@@ -64,14 +69,19 @@ jobs:
       # ── Build debug APK ─────────────────────────────────────────────────────
       - name: Build Debug APK
         working-directory: android
-        run: ./gradlew assembleDebug --no-daemon
-        env:
-          ANDROID_HOME: /usr/local/lib/android/sdk
-          ANDROID_SDK_ROOT: /usr/local/lib/android/sdk
+        run: |
+          ./gradlew assembleDebug \
+            --no-daemon \
+            --stacktrace \
+            -Dorg.gradle.jvmargs="-Xmx2g -XX:MaxMetaspaceSize=512m"
 
-      # ── Rename APK ──────────────────────────────────────────────────────────
-      - name: Rename APK to soccer-clashers.apk
-        run: cp android/app/build/outputs/apk/debug/app-debug.apk soccer-clashers.apk
+      # ── Locate & rename APK ─────────────────────────────────────────────────
+      - name: Locate and rename APK
+        run: |
+          APK_PATH=$(find android/app/build/outputs/apk -name "*.apk" | head -1)
+          echo "Found APK at: $APK_PATH"
+          cp "$APK_PATH" soccer-clashers.apk
+          ls -lh soccer-clashers.apk
 
       # ── Determine version tag ───────────────────────────────────────────────
       - name: Compute version tag
