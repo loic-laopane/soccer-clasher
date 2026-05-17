@@ -40,11 +40,9 @@ class Unit {
     this.attackCooldown = 1000;
     this.attackTimer    = 0;
     this.attackRange    = 52;
-    this.chaseRange     = this.attackRange * 2.4;
 
-    // Single locked target — one at a time
-    this._lockedTarget = null;
-    this._targetIsUnit = false;
+    // Structure target only (persistent until destroyed)
+    this._structureTarget = null;
 
     this._jerseyColor = parseInt(teamData.jerseyColor.slice(1), 16);
     this._sz = ROLE_SIZE[data.position] ?? {bw:16,bh:14,hr:8};
@@ -85,100 +83,123 @@ class Unit {
 
   // ── Update ───────────────────────────────────────────────────────────────────
 
-  update(delta, enemies, flags, goal) {
+  update(delta, enemies, flags, goal, allUnits) {
     if (this.isDead) return;
     const step = this.speed * delta;
     const CY   = CONFIG.CENTER_Y;
 
-    // ── Validate locked target ───────────────────────────────────────────────
-    if (this._lockedTarget) {
-      const t    = this._lockedTarget;
-      const dead = this._targetIsUnit ? t.isDead : t.destroyed;
-      const dist = Math.hypot(this.x-t.x, this.y-t.y);
-      if (dead || (this._targetIsUnit && dist > this.chaseRange)) {
-        this._lockedTarget = null;
-      }
+    // Find nearest enemy — fresh scan every frame (no persistent lock)
+    let nearestEnemy = null, nearestDist = Infinity;
+    for (const e of enemies) {
+      if (e.isDead) continue;
+      const d = Math.hypot(this.x - e.x, this.y - e.y);
+      if (d < nearestDist) { nearestEnemy = e; nearestDist = d; }
     }
+    const hasChaseTarget = nearestEnemy && nearestDist <= CONFIG.CHASE_RANGE;
 
-    // ── Pick new locked target ───────────────────────────────────────────────
-    if (!this._lockedTarget) {
-      let nearestEnemy=null, nearestDist=Infinity;
-      for (const e of enemies) {
-        if (e.isDead) continue;
-        const d = Math.hypot(this.x-e.x, this.y-e.y);
-        if (d < nearestDist) { nearestEnemy=e; nearestDist=d; }
-      }
-      // Only lock onto enemy if within CHASE_RANGE
-      if (nearestEnemy && nearestDist <= CONFIG.CHASE_RANGE) {
-        this._lockedTarget = nearestEnemy;
-        this._targetIsUnit = true;
-      } else {
-        // Target nearest alive flag, then goal
-        const aliveFlags = (flags||[]).filter(f=>!f.destroyed);
-        let best=null, bestD=Infinity;
-        for (const f of aliveFlags) {
-          const d=Math.hypot(this.x-f.x, this.y-f.y);
-          if(d<bestD){best=f;bestD=d;}
-        }
-        const st = best ?? (goal&&!goal.destroyed?goal:null);
-        if (st) { this._lockedTarget=st; this._targetIsUnit=false; }
-      }
-    }
-
-    if (!this._lockedTarget) { this._updateVisuals(); return; }
-
-    // ── Act on locked target ─────────────────────────────────────────────────
-    const t    = this._lockedTarget;
-    const dist = Math.hypot(this.x-t.x, this.y-t.y);
-
-    if (dist <= this.attackRange) {
-      this.state = this._targetIsUnit ? 'fighting' : 'attacking_structure';
-      this.attackTimer += delta;
-      if (this.attackTimer >= this.attackCooldown) {
-        this.attackTimer -= this.attackCooldown;
-        const dmg = (!this._targetIsUnit && this.ability==='striker') ? Math.round(this.atk*1.5) : this.atk;
-        t.takeDamage(dmg);
-        if (this._targetIsUnit && this.ability==='aoe') {
-          for (const e of enemies) {
-            if (e!==t && !e.isDead && Math.hypot(this.x-e.x,this.y-e.y)<90)
-              e.takeDamage(Math.round(this.atk*0.4));
+    if (hasChaseTarget) {
+      if (nearestDist <= this.attackRange) {
+        // Fight in place — attack nearest enemy
+        this.state = 'fighting';
+        this.attackTimer += delta;
+        if (this.attackTimer >= this.attackCooldown) {
+          this.attackTimer -= this.attackCooldown;
+          nearestEnemy.takeDamage(this.atk);
+          if (this.ability === 'aoe') {
+            for (const e of enemies) {
+              if (e !== nearestEnemy && !e.isDead && Math.hypot(this.x - e.x, this.y - e.y) < 90)
+                e.takeDamage(Math.round(this.atk * 0.4));
+            }
           }
         }
+      } else {
+        // Chase enemy via bridge
+        this.state = 'moving';
+        this.attackTimer = 0;
+        const prevY = this.y;
+        this._bridgeMove(nearestEnemy.x, nearestEnemy.y, step, CY);
+        this._checkWall(prevY, CY);
       }
     } else {
-      // ── Bridge-enforced movement ─────────────────────────────────────────
-      this.state = 'moving';
+      // No nearby enemy — advance toward structures
       this.attackTimer = 0;
 
-      const onOwnHalf      = this.isPlayer ? (this.y >= CY) : (this.y <= CY);
-      const targetEnemySide = this.isPlayer ? (t.y < CY) : (t.y > CY);
-
-      if (onOwnHalf && targetEnemySide) {
-        // Must use a bridge to cross
-        if (this._inBridgeZone(this.x)) {
-          // Aligned: move straight across
-          this._moveToward(t.x, t.y, step);
-        } else {
-          // Navigate to nearest bridge entrance
-          const bx = this._nearestBridgeX(this.x);
-          this._moveToward(bx, CY, step);
+      // Refresh structure target when depleted or destroyed
+      if (!this._structureTarget || this._structureTarget.destroyed) {
+        const aliveFlags = (flags || []).filter(f => !f.destroyed);
+        let best = null, bestD = Infinity;
+        for (const f of aliveFlags) {
+          const d = Math.hypot(this.x - f.x, this.y - f.y);
+          if (d < bestD) { best = f; bestD = d; }
         }
-      } else {
-        this._moveToward(t.x, t.y, step);
+        this._structureTarget = best ?? (goal && !goal.destroyed ? goal : null);
       }
 
-      // Safety wall: prevent crossing CENTER_Y outside bridge zone
-      const prevOnOwn = this.isPlayer ? (this.y >= CY) : (this.y <= CY);
-      // (already moved) check if just crossed
-      const nowOnEnemy = this.isPlayer ? (this.y < CY) : (this.y > CY);
-      if (!prevOnOwn && nowOnEnemy && !this._inBridgeZone(this.x)) {
-        this.y = CY; // snap back to center line wall
+      if (this._structureTarget) {
+        const t = this._structureTarget;
+        const dist = Math.hypot(this.x - t.x, this.y - t.y);
+        if (dist <= this.attackRange) {
+          this.state = 'attacking_structure';
+          this.attackTimer += delta;
+          if (this.attackTimer >= this.attackCooldown) {
+            this.attackTimer -= this.attackCooldown;
+            const dmg = this.ability === 'striker' ? Math.round(this.atk * 1.5) : this.atk;
+            t.takeDamage(dmg);
+          }
+        } else {
+          this.state = 'moving';
+          const prevY = this.y;
+          this._bridgeMove(t.x, t.y, step, CY);
+          this._checkWall(prevY, CY);
+        }
       }
     }
 
-    this.x = Phaser.Math.Clamp(this.x, CONFIG.FIELD_LEFT+4, CONFIG.FIELD_RIGHT-4);
-    this.y = Phaser.Math.Clamp(this.y, 20, CONFIG.FIELD_BOTTOM-20);
+    this._applySeparation(allUnits);
+    this.x = Phaser.Math.Clamp(this.x, CONFIG.FIELD_LEFT + 4, CONFIG.FIELD_RIGHT - 4);
+    this.y = Phaser.Math.Clamp(this.y, 20, CONFIG.FIELD_BOTTOM - 20);
     this._updateVisuals();
+  }
+
+  // Move toward (tx,ty) enforcing bridge crossing rule
+  _bridgeMove(tx, ty, step, CY) {
+    const onOwnHalf       = this.isPlayer ? (this.y >= CY) : (this.y <= CY);
+    const targetEnemySide = this.isPlayer ? (ty < CY)     : (ty > CY);
+
+    if (onOwnHalf && targetEnemySide && !this._inBridgeZone(this.x)) {
+      // Not yet at a bridge — navigate to nearest bridge entrance
+      const bx = this._nearestBridgeX(this.x);
+      this._moveToward(bx, CY, step);
+    } else {
+      this._moveToward(tx, ty, step);
+    }
+  }
+
+  // Snap back to center line if crossing outside a bridge (uses prevY saved before move)
+  _checkWall(prevY, CY) {
+    const justCrossed = this.isPlayer
+      ? (prevY >= CY && this.y < CY)
+      : (prevY <= CY && this.y > CY);
+    if (justCrossed && !this._inBridgeZone(this.x)) {
+      this.y = CY;
+    }
+  }
+
+  // Push units apart when overlapping
+  _applySeparation(allUnits) {
+    if (!allUnits) return;
+    const MIN_DIST = 20;
+    for (const other of allUnits) {
+      if (other === this || other.isDead) continue;
+      const dx = this.x - other.x;
+      const dy = this.y - other.y;
+      const dist = Math.hypot(dx, dy);
+      if (dist < MIN_DIST && dist > 0.1) {
+        const overlap = (MIN_DIST - dist) / MIN_DIST;
+        this.x += (dx / dist) * overlap * 4;
+        this.y += (dy / dist) * overlap * 2;
+      }
+    }
   }
 
   _moveToward(tx, ty, step) {
