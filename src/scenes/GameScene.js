@@ -314,8 +314,9 @@ class GameScene extends Phaser.Scene {
     const oppFlags=[this.oppFlagL,this.oppFlagR];
     const plrFlags=[this.playerFlagL,this.playerFlagR];
 
-    for(const u of alivePlr) u.update(delta,aliveAI,oppFlags,this.oppGoal);
-    for(const u of aliveAI)  u.update(delta,alivePlr,plrFlags,this.playerGoal);
+    const allUnits=[...alivePlr,...aliveAI];
+    for(const u of alivePlr) u.update(delta,aliveAI,oppFlags,this.oppGoal,allUnits);
+    for(const u of aliveAI)  u.update(delta,alivePlr,plrFlags,this.playerGoal,allUnits);
 
     this.playerGK.update(delta,aliveAI);
     this.oppGK.update(delta,alivePlr);
